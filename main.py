@@ -1,55 +1,46 @@
-#!/usr/bin/env python3
-"""
-A tiny file deduplication utility.
-Scan a directory, list files that share identical contents.
-"""
+"""Simple file deduplication utility."""
+import os, sys, hashlib, argparse
 
-import argparse, hashlib, os, sys
-
-def file_hash(path, block=65536):
+def hash_file(path):
     h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for b in iter(lambda: f.read(block), b""):
-            h.update(b)
+    try:
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                h.update(chunk)
+    except OSError:
+        return None
     return h.hexdigest()
 
-def find_dups(root):
-    hashes = {}
-    for dirpath, _, filenames in os.walk(root):
-        for name in filenames:
-            fp = os.path.join(dirpath, name)
-            try:
-                h = file_hash(fp)
-            except (OSError, PermissionError):
-                continue
-            hashes.setdefault(h, []).append(fp)
-    return [v for v in hashes.values() if len(v) > 1]
-
 def main():
-    parser = argparse.ArgumentParser(description="Find duplicate files.")
-    parser.add_argument("path", help="Directory to scan")
-    parser.add_argument("-d", "--delete", action="store_true",
-                        help="Delete duplicates, keep one copy")
+    parser = argparse.ArgumentParser(description='Find duplicate files.')
+    parser.add_argument('directory', help='Directory to scan')
+    parser.add_argument('-d', '--delete', action='store_true',
+                        help='Delete duplicates, keep one copy')
     args = parser.parse_args()
 
-    dups = find_dups(args.path)
-    if not dups:
-        print("No duplicates found.")
+    seen = {}
+    for root, _, files in os.walk(args.directory):
+        for name in files:
+            path = os.path.join(root, name)
+            h = hash_file(path)
+            if h:
+                seen.setdefault(h, []).append(path)
+
+    duplicates = [paths for paths in seen.values() if len(paths) > 1]
+    if not duplicates:
+        print('No duplicates found.')
         return
 
-    print(f"Found {len(dups)} groups of duplicates:")
-    for group in dups:
-        print("\n".join(group))
-        print("-" * 40)
-
+    for group in duplicates:
+        print('Duplicate group:')
+        for p in group:
+            print(f'  {p}')
+        print()
     if args.delete:
-        for group in dups:
-            for fp in group[1:]:
+        for group in duplicates:
+            for dup in group[1:]:
                 try:
-                    os.remove(fp)
-                    print(f"Deleted {fp}")
-                except Exception as e:
-                    print(f"Failed to delete {fp}: {e}")
-
-if __name__ == "__main__":
-    main()
+                    os.remove(dup)
+                    print(f'Deleted {dup}')
+                except OSError as e:
+                    print(f'Error deleting {dup}: {e}', file=sys.stderr)
